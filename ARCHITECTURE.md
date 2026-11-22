@@ -17,6 +17,17 @@ EventX is a browser-based event discovery and ticket-booking application:
 
 The application currently has no payment processor, email provider, message broker, or separate worker service. Refund records track an administrative/payment status; changing a status does not move money.
 
+### Architectural layers
+
+EventX has **four logical application layers**:
+
+1. **Presentation:** the React/Vite browser client and its customer, staff, and admin screens.
+2. **API/interface:** the Express application, REST routes, request parsing, authentication, and role middleware.
+3. **Application/business logic:** controllers and utilities implementing account, event, seat, booking, ticket, transfer, waitlist, refund, and notification workflows.
+4. **Data/persistence:** the MySQL connection pool, relational tables, and transactional reads/writes.
+
+Authentication and authorization are cross-cutting controls applied between API routes and business logic; they are not extra layers. The seat-lock expiry task is a scheduled process inside the backend runtime, not a separate worker tier.
+
 ## 2. Component and data-flow diagram
 
 The SVG is a standalone vector image so it remains legible when zoomed and can be embedded in GitHub or opened independently.
@@ -80,6 +91,50 @@ Typical access boundaries:
 | Initiate/accept/reject a ticket transfer | Authenticated sender, intended recipient, or sender/recipient as appropriate |
 
 Authorization is enforced by API middleware, not merely by hiding UI controls.
+
+### Authentication and authorization: step by step
+
+![EventX authentication and authorization sequence](docs/eventx-auth-flow.svg)
+
+#### Account creation
+
+1. The browser submits name, email, and password to `POST /api/auth/register`.
+2. `authRoutes.js` dispatches the public route to `authController.register`.
+3. The controller checks required fields and minimum password length, trims the name, and normalizes email to lowercase.
+4. It checks whether the normalized email already exists. If it does, registration returns HTTP `409`.
+5. It hashes the password with bcrypt (12 rounds); plaintext passwords are not stored.
+6. It inserts the user and password hash in MySQL and returns the new user ID. Registration does not issue a JWT; the user signs in to obtain one.
+
+#### Login and token issuance
+
+1. The browser submits email and password to `POST /api/auth/login`.
+2. The controller normalizes the email and loads the user's ID, profile fields, password hash, and role from MySQL.
+3. It compares the submitted password with the stored bcrypt hash. An unknown email or mismatched password returns HTTP `401` with a generic invalid-credentials message.
+4. On success, the server signs a JWT with `JWT_SECRET`. Its claims include `userId` and `role`, and its expiry is two hours.
+5. The API returns the token and public user information. The React client stores the token and user in browser `localStorage` and attaches the token to protected requests.
+
+#### Authentication of each protected request
+
+1. The browser sends the request with `Authorization: Bearer <token>`.
+2. The route's `authenticate` middleware checks for the `Bearer` scheme and verifies the JWT signature and expiry using `JWT_SECRET`.
+3. A missing header or invalid/expired token ends the request with HTTP `401`; the controller is not called.
+4. If verification succeeds, the decoded claims are placed on `req.user` and execution continues to the next middleware or handler.
+
+#### Authorization and ownership checks
+
+1. Where a route declares `authorizeRoles(...)`, that middleware checks that `req.user.role` exists and is on the route's allowed-role list.
+2. Missing role information or a role outside the allowlist returns HTTP `403`; the controller is not called.
+3. If both middlewares pass, the controller performs resource-specific checks where required. For example, a customer may cancel only their own booking, lock/confirm only their own seat locks, and transfer only their own ticket. Transfer acceptance is restricted to the intended recipient.
+4. Only after the applicable route-role and resource-ownership checks does the handler access or mutate MySQL. Coordinated mutations use a database transaction, then the API returns JSON.
+
+Public routes intentionally omit authentication, for example event discovery and public event reviews. Route-level checks and controller-level ownership checks are complementary: role membership alone does not grant access to another customer's booking or ticket.
+
+#### Important behavior and deployment notes
+
+- The JWT carries a role snapshot. Changing a user's role in MySQL does not revoke a JWT already issued; it may retain its previous role until it expires (at most two hours). The current implementation has no refresh-token or server-side revocation flow.
+- The client stores the JWT in `localStorage`. This is convenient for the current browser app but makes protection against cross-site scripting especially important. Production deployments should use HTTPS and a hardened token-storage strategy appropriate to their threat model.
+- `JWT_SECRET` must be a strong, private deployment secret. Never put it in frontend code or commit it to the repository.
+- API authorization must remain authoritative; client-side navigation or hidden buttons are not security controls.
 
 ## 5. Main workflows
 

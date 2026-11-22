@@ -1,0 +1,124 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="980" viewBox="0 0 1600 980" role="img" aria-labelledby="title description">
+  <title id="title">EventX authentication and authorization flow</title>
+  <desc id="description">Step-by-step sequence for account registration, password hashing, login and JWT issuance, followed by bearer-token verification, role authorization, resource ownership checks, and protected database access.</desc>
+  <defs>
+    <marker id="arrow-blue" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#2878b5"/>
+    </marker>
+    <marker id="arrow-green" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#16836b"/>
+    </marker>
+    <marker id="arrow-red" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#c33d3d"/>
+    </marker>
+    <style>
+      text { font-family: "Segoe UI", Arial, sans-serif; fill: #172b4d; }
+      .title { font-size: 30px; font-weight: 700; }
+      .subtitle { font-size: 16px; fill: #52657a; }
+      .lane-title { font-size: 17px; font-weight: 700; }
+      .head { font-size: 15px; font-weight: 700; }
+      .body { font-size: 13px; }
+      .small { font-size: 12px; fill: #52657a; }
+      .lane { fill: #f6f9fc; stroke: #bdcbd9; stroke-width: 1.5; rx: 14; }
+      .actor { fill: #e8f3ff; stroke: #4b8fc7; stroke-width: 2; rx: 10; }
+      .api { fill: #edf2ff; stroke: #647ac8; stroke-width: 2; rx: 10; }
+      .security { fill: #fff3e7; stroke: #d58a32; stroke-width: 2; rx: 10; }
+      .data { fill: #eaf8f3; stroke: #4b9b81; stroke-width: 2; rx: 10; }
+      .life { stroke: #95a8bb; stroke-width: 1.5; stroke-dasharray: 6 6; }
+      .step { fill: none; stroke: #2878b5; stroke-width: 2.5; marker-end: url(#arrow-blue); }
+      .return { fill: none; stroke: #16836b; stroke-width: 2.5; marker-end: url(#arrow-green); }
+      .reject { fill: none; stroke: #c33d3d; stroke-width: 2.2; marker-end: url(#arrow-red); }
+    </style>
+  </defs>
+
+  <rect width="1600" height="980" fill="#ffffff"/>
+  <text x="45" y="52" class="title">EventX | Authentication and authorization</text>
+  <text x="45" y="80" class="subtitle">Registration → password verification → JWT → request authentication → role and ownership authorization</text>
+
+  <rect x="35" y="110" width="255" height="850" class="lane"/>
+  <rect x="310" y="110" width="295" height="850" class="lane"/>
+  <rect x="625" y="110" width="305" height="850" class="lane"/>
+  <rect x="950" y="110" width="300" height="850" class="lane"/>
+  <rect x="1270" y="110" width="295" height="850" class="lane"/>
+  <text x="60" y="142" class="lane-title">Browser / user</text>
+  <text x="335" y="142" class="lane-title">Express route</text>
+  <text x="650" y="142" class="lane-title">Security middleware</text>
+  <text x="975" y="142" class="lane-title">Controller</text>
+  <text x="1295" y="142" class="lane-title">MySQL</text>
+
+  <line x1="165" y1="170" x2="165" y2="930" class="life"/>
+  <line x1="455" y1="170" x2="455" y2="930" class="life"/>
+  <line x1="775" y1="170" x2="775" y2="930" class="life"/>
+  <line x1="1100" y1="170" x2="1100" y2="930" class="life"/>
+  <line x1="1415" y1="170" x2="1415" y2="930" class="life"/>
+
+  <rect x="55" y="180" width="220" height="62" class="actor"/>
+  <text x="72" y="205" class="head">1. Register</text>
+  <text x="72" y="226" class="body">name, email, password</text>
+  <path d="M275 211 H455" class="step"/>
+  <text x="320" y="198" class="small">POST /api/auth/register</text>
+
+  <rect x="345" y="258" width="220" height="75" class="api"/>
+  <text x="362" y="284" class="head">2. Public auth route</text>
+  <text x="362" y="306" class="body">No JWT required</text>
+  <text x="362" y="324" class="small">authRoutes → register</text>
+  <path d="M455 333 V360 H1100" class="step"/>
+  <text x="724" y="352" class="small">validate, normalize email, hash password (bcrypt, 12 rounds)</text>
+  <path d="M1100 360 H1415" class="step"/>
+  <text x="1210" y="349" class="small">insert user + hash</text>
+  <path d="M1415 385 H1100" class="return"/>
+  <text x="1200" y="376" class="small">new user ID</text>
+  <path d="M1100 405 H455" class="return"/>
+  <text x="700" y="396" class="small">201 Created (registration does not issue a token)</text>
+  <path d="M455 425 H165" class="return"/>
+  <text x="235" y="417" class="small">registration result</text>
+
+  <rect x="55" y="452" width="220" height="62" class="actor"/>
+  <text x="72" y="477" class="head">3. Sign in</text>
+  <text x="72" y="499" class="body">email + password</text>
+  <path d="M275 483 H455" class="step"/>
+  <text x="320" y="470" class="small">POST /api/auth/login</text>
+  <path d="M455 515 H1100" class="step"/>
+  <text x="708" y="506" class="small">normalize email; find account</text>
+  <path d="M1100 540 H1415" class="step"/>
+  <text x="1195" y="531" class="small">load hash + role</text>
+  <path d="M1415 565 H1100" class="return"/>
+  <text x="1240" y="556" class="small">account record</text>
+
+  <rect x="990" y="581" width="220" height="72" class="security"/>
+  <text x="1008" y="608" class="head">4. Verify password</text>
+  <text x="1008" y="632" class="body">bcrypt.compare()</text>
+  <rect x="990" y="670" width="220" height="72" class="security"/>
+  <text x="1008" y="697" class="head">5. Sign JWT</text>
+  <text x="1008" y="721" class="body">userId + role; 2-hour expiry</text>
+  <path d="M1100 742 V765 H455" class="return"/>
+  <text x="537" y="757" class="small">token + public user data</text>
+  <path d="M455 785 H165" class="return"/>
+  <text x="230" y="777" class="small">6. Store token/user in localStorage</text>
+
+  <rect x="55" y="808" width="220" height="48" class="actor"/>
+  <text x="70" y="829" class="head">7. Protected request</text>
+  <text x="70" y="847" class="small">Authorization: Bearer token</text>
+  <path d="M275 832 H455" class="step"/>
+  <path d="M455 832 H775" class="step"/>
+  <text x="492" y="820" class="small">route: authenticate → authorizeRoles (when configured)</text>
+
+  <rect x="640" y="875" width="280" height="70" class="security"/>
+  <text x="657" y="898" class="head">8. Authenticate</text>
+  <text x="657" y="920" class="body">Verify signature + expiry; set req.user</text>
+  <text x="657" y="939" class="small">Missing/invalid/expired → HTTP 401</text>
+  <rect x="955" y="875" width="285" height="70" class="security"/>
+  <text x="972" y="898" class="head">9. Authorize</text>
+  <text x="972" y="920" class="body">Check role; controller checks ownership</text>
+  <text x="972" y="939" class="small">Denied → HTTP 403 / ownership error</text>
+  <rect x="1280" y="875" width="275" height="70" class="data"/>
+  <text x="1297" y="898" class="head">10. Protected handler</text>
+  <text x="1297" y="920" class="body">Then access or mutate database</text>
+  <text x="1297" y="939" class="small">Return JSON response to browser</text>
+  <path d="M920 910 H955" class="step"/>
+  <path d="M1240 910 H1280" class="step"/>
+  <path d="M775 875 V855 H455" class="reject"/>
+  <text x="490" y="849" class="small">unauthorized role: HTTP 403, stop</text>
+
+  <text x="55" y="970" class="small">Public endpoints (e.g. event listing/reviews) intentionally skip JWT middleware. Route roles do not replace per-resource ownership checks.</text>
+</svg>
