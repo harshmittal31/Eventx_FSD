@@ -4,7 +4,7 @@ EventX is an event booking application with a React/Vite frontend and an Express
 
 ## Architecture
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for the full system architecture, end-to-end workflow descriptions, API/security boundaries, data relationships, and the [architecture diagram](docs/eventx-architecture.svg).
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the four-layer system architecture, end-to-end workflows, step-by-step authentication and authorization, data relationships, the [architecture diagram](docs/eventx-architecture.svg), and the [authentication flow diagram](docs/eventx-auth-flow.svg).
 
 - `frontend/`: React application built with Vite.
 - `backend/src/app.js`: Express API and route registration.
