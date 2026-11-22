@@ -1,0 +1,21 @@
+{
+  "rows": 12,
+  "seatsPerRow": 20,
+  "sections": [
+    {
+      "name": "ORCHESTRA",
+      "rows": ["A", "B", "C"],
+      "price": 1800
+    },
+    {
+      "name": "MEZZANINE",
+      "rows": ["D", "E", "F", "G"],
+      "price": 1200
+    },
+    {
+      "name": "BALCONY",
+      "rows": ["H", "I", "J", "K", "L"],
+      "price": 700
+    }
+  ]
+}

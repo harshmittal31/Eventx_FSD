@@ -21,6 +21,32 @@ const lockSeat = async (req, res) => {
 
         await connection.beginTransaction();
 
+        const [events] = await connection.execute(
+            `SELECT id, status
+             FROM events
+             WHERE id = ?
+             LOCK IN SHARE MODE`,
+            [eventId]
+        );
+
+        if (events.length === 0) {
+            await connection.rollback();
+
+            return res.status(404).json({
+                success: false,
+                message: "Event not found"
+            });
+        }
+
+        if (events[0].status !== "PUBLISHED") {
+            await connection.rollback();
+
+            return res.status(409).json({
+                success: false,
+                message: "Seats can only be locked for published events"
+            });
+        }
+
         /*
          * IMPORTANT:
          * Lock the actual seat row.
@@ -138,7 +164,7 @@ const lockSeat = async (req, res) => {
 
         // Create expiry time
         const expiresAt = new Date(
-            Date.now() + 5 * 60 * 1000
+            Date.now() + LOCK_DURATION_MINUTES * 60 * 1000
         );
         // Create lock
         await connection.execute(

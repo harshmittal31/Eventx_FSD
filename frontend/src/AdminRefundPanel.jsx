@@ -54,7 +54,15 @@ export default function AdminRefundPanel({ token }) {
     }
   }, [token]);
 
-  useEffect(() => { loadRefunds(); }, [loadRefunds]);
+  useEffect(() => {
+    let active = true;
+    Promise.resolve().then(() => {
+      if (active) loadRefunds();
+    });
+    return () => {
+      active = false;
+    };
+  }, [loadRefunds]);
 
   const counts = useMemo(() => {
     const result = { total: refunds.length, pending: 0, approved: 0, refunded: 0, rejected: 0 };

@@ -1,6 +1,8 @@
 const crypto = require("crypto");
 const pool = require("../config/db");
 
+const MAX_BOOKING_RETRIES = 3;
+
 
 // ======================================================
 // GENERATE TICKET CODE
@@ -131,6 +133,7 @@ const createTicketForBooking = async (
     // 2. Check if ticket already exists
     // --------------------------------------------------
 
+    // The unique booking_seat_id index prevents duplicates without a gap-locking read.
     const [existingTicketRows] =
         await connection.query(
             `
@@ -140,7 +143,6 @@ const createTicketForBooking = async (
                 status
             FROM tickets
             WHERE booking_seat_id = ?
-            FOR UPDATE
             `,
             [bookingSeatId]
         );
@@ -330,6 +332,47 @@ const confirmBooking = async (req, res) => {
                 })
         );
 
+        const lockPlaceholders = orderedLockIds.map(() => "?").join(",");
+        const [preflightLocks] = await pool.query(
+            `
+            SELECT sl.id, sl.user_id, s.event_id
+            FROM seat_locks sl
+            LEFT JOIN seats s ON s.id = sl.seat_id
+            WHERE sl.id IN (${lockPlaceholders})
+            `,
+            orderedLockIds
+        );
+
+        if (preflightLocks.length !== orderedLockIds.length) {
+            return res.status(404).json({
+                success: false,
+                message: "One or more seat locks were not found"
+            });
+        }
+
+        if (preflightLocks.some(lock => Number(lock.user_id) !== Number(userId))) {
+            return res.status(403).json({
+                success: false,
+                message: "You do not own one or more of these seat locks"
+            });
+        }
+
+        const orderedEventIds = [
+            ...new Set(
+                preflightLocks
+                    .map(lock => lock.event_id)
+                    .filter(eventId => eventId !== null)
+                    .map(String)
+            )
+        ].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+
+        if (orderedEventIds.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: "One or more seat locks reference a missing seat"
+            });
+        }
+
         // ==================================================
         // 3. GET DATABASE CONNECTION AND START TRANSACTION
         // ==================================================
@@ -338,6 +381,38 @@ const confirmBooking = async (req, res) => {
 
         await connection.beginTransaction();
         transactionStarted = true;
+
+        // Shared event locks allow concurrent bookings while preventing
+        // event cancellation from racing the booking transaction.
+        for (const currentEventId of orderedEventIds) {
+            const [eventRows] = await connection.query(
+                `SELECT id, status
+                 FROM events
+                 WHERE id = ?
+                 LOCK IN SHARE MODE`,
+                [currentEventId]
+            );
+
+            if (eventRows.length === 0) {
+                await connection.rollback();
+                transactionStarted = false;
+
+                return res.status(404).json({
+                    success: false,
+                    message: "Event not found"
+                });
+            }
+
+            if (eventRows[0].status !== "PUBLISHED") {
+                await connection.rollback();
+                transactionStarted = false;
+
+                return res.status(409).json({
+                    success: false,
+                    message: "Bookings are only available for published events"
+                });
+            }
+        }
 
         // ==================================================
         // 4. LOCK AND VALIDATE EVERY SEAT LOCK
@@ -770,16 +845,37 @@ const confirmBooking = async (req, res) => {
         });
 
     } catch (error) {
+        let rollbackSucceeded = true;
         if (connection && transactionStarted) {
             try {
                 await connection.rollback();
                 transactionStarted = false;
             } catch (rollbackError) {
+                rollbackSucceeded = false;
                 console.error(
                     "Booking rollback error:",
                     rollbackError
                 );
             }
+        }
+
+        const retryCount = req.bookingConfirmationRetryCount || 0;
+        const isRetryableLockError =
+            error.errno === 1213 || error.errno === 1205;
+        if (
+            isRetryableLockError &&
+            rollbackSucceeded &&
+            retryCount < MAX_BOOKING_RETRIES
+        ) {
+            req.bookingConfirmationRetryCount = retryCount + 1;
+            if (connection) {
+                connection.release();
+                connection = null;
+            }
+            await new Promise(resolve =>
+                setTimeout(resolve, 25 * (retryCount + 1))
+            );
+            return confirmBooking(req, res);
         }
 
         console.error(
@@ -951,8 +1047,18 @@ const cancelBooking = async (req, res) => {
                 UPDATE tickets
                 SET status = 'CANCELLED'
                 WHERE booking_seat_id = ?
-                  AND status = 'VALID'
+                  AND status IN ('VALID', 'PENDING_TRANSFER')
                 `,
+                [bookingSeat.booking_seat_id]
+            );
+
+            await connection.query(
+                `UPDATE ticket_transfers tt
+                 JOIN tickets t ON t.id = tt.ticket_id
+                 SET tt.status = 'REJECTED',
+                     tt.resolved_at = CURRENT_TIMESTAMP
+                 WHERE t.booking_seat_id = ?
+                   AND tt.status = 'PENDING'`,
                 [bookingSeat.booking_seat_id]
             );
         }
@@ -1043,7 +1149,42 @@ const cancelBooking = async (req, res) => {
         // 10. MARK WAITLIST ENTRIES AS NOTIFIED
         // ============================================
 
-        for (const waitlistEntry of waitlistRows) {
+        for (let index = 0; index < waitlistRows.length; index++) {
+            const waitlistEntry = waitlistRows[index];
+            const releasedSeat = releasedSeats[index];
+            const lockId = crypto.randomUUID();
+            const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
+
+            const [seatUpdateResult] = await connection.query(
+                `
+                UPDATE seats
+                SET status = 'HELD'
+                WHERE id = ?
+                  AND status = 'AVAILABLE'
+                `,
+                [releasedSeat.seatId]
+            );
+
+            if (seatUpdateResult.affectedRows !== 1) {
+                throw new Error(
+                    `Failed to reserve released seat ${releasedSeat.seatNumber} for the waitlist`
+                );
+            }
+
+            await connection.query(
+                `
+                INSERT INTO seat_locks
+                    (id, seat_id, user_id, expires_at, status)
+                VALUES (?, ?, ?, ?, 'ACTIVE')
+                `,
+                [
+                    lockId,
+                    releasedSeat.seatId,
+                    waitlistEntry.user_id,
+                    expiresAt
+                ]
+            );
+
             const [waitlistUpdateResult] =
                 await connection.query(
                     `
@@ -1057,15 +1198,22 @@ const cancelBooking = async (req, res) => {
                     [waitlistEntry.id]
                 );
 
-            if (waitlistUpdateResult.affectedRows === 1) {
-                promotedWaitlist.push({
-                    id: waitlistEntry.id,
-                    userId: waitlistEntry.user_id,
-                    eventId: waitlistEntry.event_id,
-                    position: waitlistEntry.position,
-                    status: "NOTIFIED"
-                });
+            if (waitlistUpdateResult.affectedRows !== 1) {
+                throw new Error(
+                    `Failed to promote waitlist entry ${waitlistEntry.id}`
+                );
             }
+
+            promotedWaitlist.push({
+                id: waitlistEntry.id,
+                userId: waitlistEntry.user_id,
+                eventId: waitlistEntry.event_id,
+                position: waitlistEntry.position,
+                status: "NOTIFIED",
+                seatId: releasedSeat.seatId,
+                lockId,
+                expiresAt
+            });
         }
 
         // ============================================

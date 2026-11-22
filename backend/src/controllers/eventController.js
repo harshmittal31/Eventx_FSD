@@ -1,5 +1,6 @@
 const pool = require("../config/db");
 const venueConfig = require("../config/venueConfig.json");
+const validateVenueLayout = require("../utils/venueLayout");
 
 const createEvent = async (req, res) => {
     let connection;
@@ -10,9 +11,12 @@ const createEvent = async (req, res) => {
             description,
             venueName,
             eventDate,
-            rows = venueConfig.defaultLayout.rows,
-            seatsPerRow = venueConfig.defaultLayout.seatsPerRow
+            venueLayout: requestedVenueLayout
         } = req.body;
+        let rows = req.body.rows ?? venueConfig.defaultLayout.rows;
+        let seatsPerRow =
+            req.body.seatsPerRow ?? venueConfig.defaultLayout.seatsPerRow;
+        let sections;
 
         // 1. Validate required fields
         if (!name || !venueName || !eventDate) {
@@ -20,6 +24,20 @@ const createEvent = async (req, res) => {
                 success: false,
                 message: "Name, venueName and eventDate are required"
             });
+        }
+
+        if (requestedVenueLayout !== undefined) {
+            const validation = validateVenueLayout(requestedVenueLayout);
+            if (validation.error) {
+                return res.status(400).json({
+                    success: false,
+                    message: validation.error
+                });
+            }
+
+            rows = validation.layout.rows;
+            seatsPerRow = validation.layout.seatsPerRow;
+            sections = validation.layout.sections;
         }
 
         // 2. Validate numeric layout values
@@ -39,17 +57,6 @@ const createEvent = async (req, res) => {
             });
         }
 
-        // 3. Validate the venue configuration
-        if (
-            !venueConfig.sections ||
-            venueConfig.sections.length === 0
-        ) {
-            return res.status(500).json({
-                success: false,
-                message: "Venue configuration is missing sections"
-            });
-        }
-
         const totalSeats = rows * seatsPerRow;
 
         // 4. Generate the actual layout for this event
@@ -58,51 +65,53 @@ const createEvent = async (req, res) => {
             (_, index) => String.fromCharCode(65 + index)
         );
 
-        const sections = venueConfig.sections.map(section => ({
-            ...section,
-            rows: section.rows.filter(row =>
-                rowLabels.includes(row)
-            )
-        })).filter(section => section.rows.length > 0);
-
-        // The configured layout may define only A-J. When an organizer
-        // creates more rows, assign any additional rows to the final
-        // configured section so every generated row has a section and price.
-        const alreadyAssignedRows = new Set(
-            sections.flatMap(section => section.rows)
-        );
-        const unassignedRows = rowLabels.filter(
-            row => !alreadyAssignedRows.has(row)
-        );
-
-        if (unassignedRows.length > 0) {
-            const fallbackConfig = venueConfig.sections[venueConfig.sections.length - 1];
-            let fallbackSection = sections.find(
-                section => section.name === fallbackConfig.name
-            );
-
-            if (!fallbackSection) {
-                fallbackSection = { ...fallbackConfig, rows: [] };
-                sections.push(fallbackSection);
+        if (requestedVenueLayout === undefined) {
+            if (!Array.isArray(venueConfig.sections) || venueConfig.sections.length === 0) {
+                return res.status(500).json({
+                    success: false,
+                    message: "Venue configuration is missing sections"
+                });
             }
 
-            fallbackSection.rows.push(...unassignedRows);
-        }
+            sections = venueConfig.sections.map(section => ({
+                ...section,
+                rows: section.rows.filter(row => rowLabels.includes(row))
+            })).filter(section => section.rows.length > 0);
 
-        // Ensure every row belongs to exactly one section
-        const assignedRows = sections.flatMap(
-            section => section.rows
-        );
+            // Assign rows beyond the global layout to its last tier.
+            const alreadyAssignedRows = new Set(
+                sections.flatMap(section => section.rows)
+            );
+            const unassignedRows = rowLabels.filter(
+                row => !alreadyAssignedRows.has(row)
+            );
 
-        if (
-            assignedRows.length !== rows ||
-            new Set(assignedRows).size !== rows
-        ) {
-            return res.status(400).json({
-                success: false,
-                message:
-                    "Venue configuration must assign every row exactly once"
-            });
+            if (unassignedRows.length > 0) {
+                const fallbackConfig =
+                    venueConfig.sections[venueConfig.sections.length - 1];
+                let fallbackSection = sections.find(
+                    section => section.name === fallbackConfig.name
+                );
+
+                if (!fallbackSection) {
+                    fallbackSection = { ...fallbackConfig, rows: [] };
+                    sections.push(fallbackSection);
+                }
+
+                fallbackSection.rows.push(...unassignedRows);
+            }
+
+            const assignedRows = sections.flatMap(section => section.rows);
+            if (
+                assignedRows.length !== rows ||
+                new Set(assignedRows).size !== rows
+            ) {
+                return res.status(400).json({
+                    success: false,
+                    message:
+                        "Venue configuration must assign every row exactly once"
+                });
+            }
         }
 
         const venueLayout = {
@@ -358,6 +367,17 @@ const updateEvent = async (req, res) => {
                 [eventId]
             );
             ticketsCancelled += allTicketUpdate.affectedRows;
+
+            await connection.query(
+                `UPDATE ticket_transfers tt
+                 INNER JOIN tickets t ON t.id = tt.ticket_id
+                 INNER JOIN booking_seats bs ON bs.id = t.booking_seat_id
+                 INNER JOIN bookings b ON b.id = bs.booking_id
+                 SET tt.status = 'REJECTED',
+                     tt.resolved_at = CURRENT_TIMESTAMP
+                 WHERE b.event_id = ? AND tt.status = 'PENDING'`,
+                [eventId]
+            );
 
             // Seat rows and booking/ticket history are preserved. Only the seat
             // availability state is reset; cancelled events cannot be booked because

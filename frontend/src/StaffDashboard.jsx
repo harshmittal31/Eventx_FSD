@@ -87,13 +87,21 @@ export default function StaffDashboard() {
   const authorized = Boolean(token && (role === "STAFF" || role === "ADMIN"));
 
   useEffect(() => {
-    if (token && (role === "STAFF" || role === "ADMIN")) fetchHistory();
+    let active = true;
+    Promise.resolve().then(() => {
+      if (active && token && (role === "STAFF" || role === "ADMIN")) {
+        fetchHistory();
+      }
+    });
+    return () => {
+      active = false;
+    };
   }, [token, role, fetchHistory]);
 
   useEffect(() => {
-    if (token && role === "CUSTOMER") {
-      window.location.replace("/");
-    }
+    Promise.resolve().then(() => {
+      if (token && role === "CUSTOMER") window.location.replace("/");
+    });
   }, [token, role]);
 
   const verifyTicket = useCallback(async (rawData) => {
@@ -159,7 +167,9 @@ export default function StaffDashboard() {
         verifyTicket(decodedText);
       }, () => {});
     } catch (err) {
-      setError(err.message || "Could not start the QR scanner.");
+      Promise.resolve().then(() => {
+        if (!disposed) setError(err.message || "Could not start the QR scanner.");
+      });
     }
     return () => {
       disposed = true;

@@ -103,10 +103,16 @@ function App() {
 
   const previousEventId = useRef(eventId);
 
+  useEffect(() => {
+    const intervalId = window.setInterval(() => setCurrentTime(Date.now()), 60000);
+    return () => window.clearInterval(intervalId);
+  }, []);
+
   // Event discovery state.
   const [events, setEvents] = useState([]);
   const [eventsLoading, setEventsLoading] = useState(false);
   const [eventsError, setEventsError] = useState("");
+  const [currentTime, setCurrentTime] = useState(() => Date.now());
   const [eventSearch, setEventSearch] = useState("");
   const [eventFilter, setEventFilter] = useState("upcoming");
   const [showCreateEvent, setShowCreateEvent] = useState(false);
@@ -170,7 +176,13 @@ function App() {
   }, []);
 
   useEffect(() => {
-    fetchEvents();
+    let active = true;
+    Promise.resolve().then(() => {
+      if (active) fetchEvents();
+    });
+    return () => {
+      active = false;
+    };
   }, [fetchEvents]);
 
   const normalizedRole = String(user?.role || "").toUpperCase();
@@ -181,12 +193,19 @@ function App() {
   }, 0);
 
   useEffect(() => {
-    try {
-      const stored = localStorage.getItem(notificationStorageKey);
-      setReadNotificationIds(new Set(stored ? JSON.parse(stored) : []));
-    } catch {
-      setReadNotificationIds(new Set());
-    }
+    let active = true;
+    Promise.resolve().then(() => {
+      if (!active) return;
+      try {
+        const stored = localStorage.getItem(notificationStorageKey);
+        setReadNotificationIds(new Set(stored ? JSON.parse(stored) : []));
+      } catch {
+        setReadNotificationIds(new Set());
+      }
+    });
+    return () => {
+      active = false;
+    };
   }, [notificationStorageKey]);
 
   const markNotificationsAsRead = useCallback(async (notifications = eventNotifications) => {
@@ -224,7 +243,7 @@ function App() {
       !notificationsLoading &&
       eventNotifications.some((notification) => !readNotificationIds.has(getNotificationKey(notification)))
     ) {
-      markNotificationsAsRead(eventNotifications);
+      Promise.resolve().then(() => markNotificationsAsRead(eventNotifications));
     }
   }, [showNotifications, normalizedRole, notificationsLoading, eventNotifications, readNotificationIds, markNotificationsAsRead]);
 
@@ -239,7 +258,7 @@ function App() {
     const query = eventSearch.trim().toLowerCase();
     const searchable = `${event.name || ""} ${event.venue_name || ""} ${event.description || ""}`.toLowerCase();
     const eventTime = new Date(event.event_date).getTime();
-    const isUpcoming = Number.isFinite(eventTime) && eventTime >= Date.now();
+    const isUpcoming = Number.isFinite(eventTime) && eventTime >= currentTime;
     const matchesSearch = !query || searchable.includes(query);
     const matchesFilter =
       eventFilter === "all" ||
@@ -297,16 +316,23 @@ function App() {
   }, [eventId]);
 
   useEffect(() => {
-    if (previousEventId.current !== eventId) {
-      previousEventId.current = eventId;
-      setSelectedSeats([]);
-      setLockedSeats([]);
-      setConfirmedBooking(null);
-      setMessage("");
-      setError("");
-    }
+    let active = true;
+    Promise.resolve().then(() => {
+      if (!active) return;
+      if (previousEventId.current !== eventId) {
+        previousEventId.current = eventId;
+        setSelectedSeats([]);
+        setLockedSeats([]);
+        setConfirmedBooking(null);
+        setMessage("");
+        setError("");
+      }
 
-    fetchSeats();
+      fetchSeats();
+    });
+    return () => {
+      active = false;
+    };
   }, [eventId, fetchSeats]);
 
   // Fetch booking history from the database so it survives page refreshes.
@@ -624,16 +650,30 @@ function App() {
   }, [token, normalizedRole]);
 
   useEffect(() => {
-    if (token) fetchMyBookings();
-    else {
-      setMyBookings([]);
-      setMyTickets([]);
-    }
+    let active = true;
+    Promise.resolve().then(() => {
+      if (!active) return;
+      if (token) fetchMyBookings();
+      else {
+        setMyBookings([]);
+        setMyTickets([]);
+      }
+    });
+    return () => {
+      active = false;
+    };
   }, [token, fetchMyBookings]);
 
   useEffect(() => {
-    if (token && normalizedRole === "CUSTOMER") fetchEventNotifications();
-    else setEventNotifications([]);
+    let active = true;
+    Promise.resolve().then(() => {
+      if (!active) return;
+      if (token && normalizedRole === "CUSTOMER") fetchEventNotifications();
+      else setEventNotifications([]);
+    });
+    return () => {
+      active = false;
+    };
   }, [token, normalizedRole, fetchEventNotifications]);
 
   // Verify a scanned or manually entered signed QR payload.
@@ -724,7 +764,11 @@ function App() {
         }
       );
     } catch (err) {
-      setVerificationError(err.message || "Could not start the QR scanner.");
+      Promise.resolve().then(() => {
+        if (!disposed) {
+          setVerificationError(err.message || "Could not start the QR scanner.");
+        }
+      });
     }
 
     return () => {
@@ -1294,9 +1338,6 @@ function App() {
     }
   };
 
-  const cancelCurrentBooking = () =>
-    cancelBookingById(confirmedBooking?.booking?.id);
-
   // Seat map helpers.
   const sections = ["VIP", "PREMIUM", "REGULAR"];
 
@@ -1550,7 +1591,7 @@ function App() {
                 <button
                   className="primary-button"
                   type="button"
-                  disabled={String(detailEvent.status || "PUBLISHED").toUpperCase() !== "PUBLISHED" || new Date(detailEvent.event_date).getTime() < Date.now()}
+                  disabled={String(detailEvent.status || "PUBLISHED").toUpperCase() !== "PUBLISHED" || new Date(detailEvent.event_date).getTime() < currentTime}
                   onClick={() => { chooseEvent(detailEvent); setDetailEvent(null); }}
                 >
                   Choose seats
@@ -2334,7 +2375,7 @@ function App() {
                       <span className="event-status-pill">
                         {event.status || "PUBLISHED"}
                       </span>
-                      {Number.isFinite(eventDate.getTime()) && eventDate.getTime() < Date.now() && (
+                      {Number.isFinite(eventDate.getTime()) && eventDate.getTime() < currentTime && (
                         <span className="event-past-label">Past event</span>
                       )}
                     </div>
@@ -2358,7 +2399,7 @@ function App() {
                         <button
                           className="event-book-button"
                           type="button"
-                          disabled={String(event.status || "PUBLISHED").toUpperCase() !== "PUBLISHED" || new Date(event.event_date).getTime() < Date.now()}
+                          disabled={String(event.status || "PUBLISHED").toUpperCase() !== "PUBLISHED" || new Date(event.event_date).getTime() < currentTime}
                           onClick={() => chooseEvent(event)}
                         >
                           {selected ? "Selected event" : "Book tickets"}
