@@ -1,0 +1,21 @@
+{
+  "rows": 9,
+  "seatsPerRow": 12,
+  "sections": [
+    {
+      "name": "FRONT",
+      "rows": ["A", "B"],
+      "price": 1000
+    },
+    {
+      "name": "MIDDLE",
+      "rows": ["C", "D", "E", "F"],
+      "price": 650
+    },
+    {
+      "name": "BACK",
+      "rows": ["G", "H", "I"],
+      "price": 350
+    }
+  ]
+}

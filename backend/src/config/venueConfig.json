@@ -1,0 +1,23 @@
+{
+  "defaultLayout": {
+    "rows": 10,
+    "seatsPerRow": 10
+  },
+  "sections": [
+    {
+      "name": "VIP",
+      "rows": ["A", "B"],
+      "price": 1000
+    },
+    {
+      "name": "PREMIUM",
+      "rows": ["C", "D", "E"],
+      "price": 750
+    },
+    {
+      "name": "REGULAR",
+      "rows": ["F", "G", "H", "I", "J"],
+      "price": 500
+    }
+  ]
+}
